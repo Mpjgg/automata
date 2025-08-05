@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Autómatas Celulares Reactivos</title>
+    <title>Autómatas Celulares con Cámara Integrada</title>
     <style>
         body {
             margin: 0;
@@ -92,20 +92,22 @@
         
         <div id="controls">
             <div class="control-group">
-                <label>Sensibilidad de Movimiento:</label>
-                <input type="range" id="sensitivity" min="0.1" max="2.0" step="0.1" value="0.8">
-            </div>
-            <div class="control-group">
                 <label>Velocidad de Evolución:</label>
-                <input type="range" id="speed" min="1" max="10" step="1" value="3">
+                <input type="range" id="speed" min="1" max="60" step="1" value="30">
             </div>
             <div class="control-group">
-                <label>Fuerza de Perturbación:</label>
-                <input type="range" id="strength" min="0.1" max="1.0" step="0.1" value="0.5">
+                <label>Mezcla Cámara/Autómata:</label>
+                <input type="range" id="blend" min="0.0" max="1.0" step="0.1" value="0.5">
             </div>
             <div class="control-group">
-                <button id="reset">Reset</button>
-                <button id="randomize">Aleatorizar</button>
+                <label>Umbral de Brillo:</label>
+                <input type="range" id="threshold" min="0.1" max="0.9" step="0.1" value="0.4">
+            </div>
+            <div class="control-group">
+                <label>Tamaño de Célula:</label>
+                <input type="range" id="cellSize" min="1" max="8" step="1" value="3">
+            </div>
+            <div class="control-group">
                 <button id="pause">Pausar</button>
             </div>
         </div>
@@ -122,11 +124,10 @@
         const status = document.getElementById('status');
         
         // Controles
-        const sensitivitySlider = document.getElementById('sensitivity');
         const speedSlider = document.getElementById('speed');
-        const strengthSlider = document.getElementById('strength');
-        const resetBtn = document.getElementById('reset');
-        const randomizeBtn = document.getElementById('randomize');
+        const blendSlider = document.getElementById('blend');
+        const thresholdSlider = document.getElementById('threshold');
+        const cellSizeSlider = document.getElementById('cellSize');
         const pauseBtn = document.getElementById('pause');
         
         let isRunning = true;
@@ -152,101 +153,93 @@
             }
         `;
         
-        // Fragment shader para autómatas celulares con detección de movimiento
+        // Fragment shader que integra cámara con autómatas
         const fragmentShaderSource = `
             precision mediump float;
             
             uniform sampler2D u_currentState;
             uniform sampler2D u_videoTexture;
-            uniform sampler2D u_prevVideoTexture;
             uniform vec2 u_resolution;
             uniform float u_time;
-            uniform float u_sensitivity;
-            uniform float u_strength;
+            uniform float u_blend;
+            uniform float u_threshold;
+            uniform float u_cellSize;
             
             varying vec2 v_texCoord;
             
             // Función para obtener el estado de una célula vecina
             float getCell(vec2 offset) {
-                vec2 coord = v_texCoord + offset / u_resolution;
+                vec2 cellOffset = offset * u_cellSize;
+                vec2 coord = v_texCoord + cellOffset / u_resolution;
                 if (coord.x < 0.0 || coord.x > 1.0 || coord.y < 0.0 || coord.y > 1.0) {
                     return 0.0;
                 }
                 return texture2D(u_currentState, coord).r;
             }
             
-            // Detectar movimiento comparando frames
-            float detectMotion() {
-                vec2 videoCoord = vec2(1.0 - v_texCoord.x, v_texCoord.y); // Flip horizontal
-                vec3 current = texture2D(u_videoTexture, videoCoord).rgb;
-                vec3 previous = texture2D(u_prevVideoTexture, videoCoord).rgb;
-                
-                float diff = length(current - previous);
-                return smoothstep(0.0, u_sensitivity, diff);
+            // Convertir píxel de cámara a estado celular
+            float getCameraCell() {
+                vec2 videoCoord = vec2(1.0 - v_texCoord.x, v_texCoord.y);
+                vec3 cameraColor = texture2D(u_videoTexture, videoCoord).rgb;
+                float brightness = dot(cameraColor, vec3(0.299, 0.587, 0.114));
+                return step(u_threshold, brightness);
             }
             
             void main() {
-                // Contar vecinos vivos (Conway's Game of Life)
+                // Obtener coordenadas de célula
+                vec2 cellCoord = floor(v_texCoord * u_resolution / u_cellSize) * u_cellSize / u_resolution;
+                
+                // Contar vecinos vivos
                 float neighbors = 
                     getCell(vec2(-1, -1)) + getCell(vec2(0, -1)) + getCell(vec2(1, -1)) +
                     getCell(vec2(-1,  0)) +                        getCell(vec2(1,  0)) +
                     getCell(vec2(-1,  1)) + getCell(vec2(0,  1)) + getCell(vec2(1,  1));
                 
                 float currentCell = getCell(vec2(0, 0));
-                float newState = 0.0;
+                float cameraCell = getCameraCell();
                 
-                // Reglas modificadas más dinámicas
-                if (currentCell > 0.5) {
-                    // Célula viva - más flexible para sobrevivir
-                    if (neighbors >= 1.8 && neighbors <= 3.2) {
-                        newState = 0.95; // Decaimiento gradual
+                // Autómata celular híbrido
+                float automataState = 0.0;
+                
+                // Reglas modificadas que consideran tanto vecinos como cámara
+                if (currentCell > 0.5 || cameraCell > 0.5) {
+                    // Célula viva o píxel brillante de cámara
+                    if (neighbors >= 2.0 && neighbors <= 3.0) {
+                        automataState = 1.0;
+                    } else if (neighbors == 1.0 && cameraCell > 0.5) {
+                        // La cámara puede "rescatar" células con pocos vecinos
+                        automataState = 1.0;
                     }
                 } else {
-                    // Célula muerta - más fácil nacer
-                    if (neighbors >= 2.5 && neighbors <= 3.5) {
-                        newState = 1.0;
+                    // Célula muerta
+                    if (neighbors >= 2.8 && neighbors <= 3.2) {
+                        automataState = 1.0;
                     }
                 }
                 
-                // Añadir vida espontánea ocasional
-                vec2 worldPos = v_texCoord * u_resolution;
-                float spontaneous = fract(sin(dot(worldPos + u_time * 0.1, vec2(12.9898, 78.233))) * 43758.5453);
-                if (spontaneous > 0.998) {
-                    newState = 1.0;
-                }
+                // Mezclar estado del autómata con imagen de cámara
+                vec2 videoCoord = vec2(1.0 - v_texCoord.x, v_texCoord.y);
+                vec3 cameraColor = texture2D(u_videoTexture, videoCoord).rgb;
                 
-                // Detectar movimiento y agregar perturbaciones
-                float motion = detectMotion();
+                // Estado final basado en mezcla
+                float finalState = mix(automataState, cameraCell, u_blend);
                 
-                // Si hay movimiento significativo, crear nueva vida
-                if (motion > 0.2) {
-                    vec2 worldPos = v_texCoord * u_resolution;
-                    float noise = fract(sin(dot(worldPos + u_time, vec2(12.9898, 78.233))) * 43758.5453);
-                    if (noise < motion * u_strength * 2.0) {
-                        newState = 1.0;
-                    }
+                // Colores dinámicos
+                vec3 finalColor;
+                if (finalState > 0.5) {
+                    // Combinar colores de cámara con colores de autómata
+                    vec3 automataColor = vec3(0.2, 1.0, 0.5); // Verde característico
+                    finalColor = mix(automataColor, cameraColor, u_blend);
                     
-                    // Crear patrones más complejos alrededor del movimiento
-                    float pattern = sin(worldPos.x * 0.1 + u_time) * sin(worldPos.y * 0.1 + u_time);
-                    if (pattern > 0.3 && motion > 0.4) {
-                        newState = 1.0;
-                    }
+                    // Efecto de "vida digital"
+                    float pulse = sin(u_time * 3.0 + v_texCoord.x * 10.0 + v_texCoord.y * 10.0) * 0.1 + 0.9;
+                    finalColor *= pulse;
+                } else {
+                    // Fondo con trazas de la cámara
+                    finalColor = cameraColor * 0.1 * (1.0 - u_blend);
                 }
                 
-                // Agregar variaciones de color basadas en el movimiento
-                float motionIntensity = motion * 0.5;
-                vec3 color = vec3(newState);
-                
-                if (newState > 0.5) {
-                    // Células vivas con colores influenciados por el movimiento
-                    color = vec3(
-                        newState * (0.5 + motionIntensity),
-                        newState * (0.8 - motionIntensity * 0.3),
-                        newState * (0.3 + motionIntensity * 0.7)
-                    );
-                }
-                
-                gl_FragColor = vec4(color, 1.0);
+                gl_FragColor = vec4(finalColor, 1.0);
             }
         `;
         
@@ -296,17 +289,16 @@
         const positionAttributeLocation = gl.getAttribLocation(program, 'a_position');
         const currentStateLocation = gl.getUniformLocation(program, 'u_currentState');
         const videoTextureLocation = gl.getUniformLocation(program, 'u_videoTexture');
-        const prevVideoTextureLocation = gl.getUniformLocation(program, 'u_prevVideoTexture');
         const resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
         const timeLocation = gl.getUniformLocation(program, 'u_time');
-        const sensitivityLocation = gl.getUniformLocation(program, 'u_sensitivity');
-        const strengthLocation = gl.getUniformLocation(program, 'u_strength');
+        const blendLocation = gl.getUniformLocation(program, 'u_blend');
+        const thresholdLocation = gl.getUniformLocation(program, 'u_threshold');
+        const cellSizeLocation = gl.getUniformLocation(program, 'u_cellSize');
         
-        // Crear texturas para el estado actual y anterior
+        // Crear texturas para el estado actual y siguiente
         const currentStateTexture = gl.createTexture();
         const nextStateTexture = gl.createTexture();
         const videoTexture = gl.createTexture();
-        const prevVideoTexture = gl.createTexture();
         
         // Configurar texturas
         function setupTexture(texture, width, height, data = null) {
@@ -318,14 +310,15 @@
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         }
         
-        // Inicializar estado aleatorio
-        function initializeRandomState() {
+        // Inicializar estado basado en la cámara
+        function initializeFromCamera() {
             const width = canvas.width;
             const height = canvas.height;
             const data = new Uint8Array(width * height * 4);
             
+            // Inicializar con patrón aleatorio que será reemplazado por la cámara
             for (let i = 0; i < data.length; i += 4) {
-                const alive = Math.random() < 0.3 ? 255 : 0;
+                const alive = Math.random() < 0.1 ? 255 : 0;
                 data[i] = alive;     // R
                 data[i + 1] = alive; // G
                 data[i + 2] = alive; // B
@@ -345,9 +338,8 @@
                 video.srcObject = stream;
                 
                 video.addEventListener('loadedmetadata', () => {
-                    status.textContent = 'Cámara lista - Muévete para influir en los autómatas';
+                    status.textContent = 'Cámara integrada - Los píxeles son células vivas';
                     setupTexture(videoTexture, video.videoWidth, video.videoHeight);
-                    setupTexture(prevVideoTexture, video.videoWidth, video.videoHeight);
                 });
                 
             } catch (err) {
@@ -360,7 +352,6 @@
         const framebuffer = gl.createFramebuffer();
         
         let startTime = Date.now();
-        let lastVideoUpdate = 0;
         
         function render() {
             if (!isRunning) return;
@@ -368,77 +359,63 @@
             const currentTime = (Date.now() - startTime) / 1000;
             frameCount++;
             
-            // Actualizar texturas de video cada pocos frames para detectar movimiento
-            if (frameCount % Math.max(1, parseInt(speedSlider.value) - 2) === 0 && video.readyState >= 2) {
-                // Guardar frame anterior
+            // Actualizar textura de video constantemente
+            if (video.readyState >= 2) {
                 gl.activeTexture(gl.TEXTURE1);
-                gl.bindTexture(gl.TEXTURE_2D, prevVideoTexture);
-                gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, video.videoWidth, video.videoHeight, 0);
-                
-                // Actualizar frame actual
-                gl.activeTexture(gl.TEXTURE2);
                 gl.bindTexture(gl.TEXTURE_2D, videoTexture);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
             }
             
-            // Renderizar a textura off-screen (próximo estado)
-            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, nextStateTexture, 0);
-            gl.viewport(0, 0, canvas.width, canvas.height);
+            // Solo evolucionar el autómata según la velocidad seleccionada
+            if (frameCount % Math.max(1, 61 - parseInt(speedSlider.value)) === 0) {
+                // Renderizar a textura off-screen (próximo estado)
+                gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, nextStateTexture, 0);
+                gl.viewport(0, 0, canvas.width, canvas.height);
+                
+                gl.useProgram(program);
+                
+                // Configurar atributos
+                gl.enableVertexAttribArray(positionAttributeLocation);
+                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+                
+                // Configurar uniforms
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, currentStateTexture);
+                gl.uniform1i(currentStateLocation, 0);
+                
+                gl.activeTexture(gl.TEXTURE1);
+                gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+                gl.uniform1i(videoTextureLocation, 1);
+                
+                gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
+                gl.uniform1f(timeLocation, currentTime);
+                gl.uniform1f(blendLocation, parseFloat(blendSlider.value));
+                gl.uniform1f(thresholdLocation, parseFloat(thresholdSlider.value));
+                gl.uniform1f(cellSizeLocation, parseFloat(cellSizeSlider.value));
+                
+                // Dibujar
+                gl.drawArrays(gl.TRIANGLES, 0, 6);
+                
+                // Intercambiar texturas
+                const temp = currentStateTexture;
+                currentStateTexture = nextStateTexture;
+                nextStateTexture = temp;
+            }
             
-            gl.useProgram(program);
-            
-            // Configurar atributos
-            gl.enableVertexAttribArray(positionAttributeLocation);
-            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-            gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
-            
-            // Configurar uniforms
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, currentStateTexture);
-            gl.uniform1i(currentStateLocation, 0);
-            
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, prevVideoTexture);
-            gl.uniform1i(prevVideoTextureLocation, 1);
-            
-            gl.activeTexture(gl.TEXTURE2);
-            gl.bindTexture(gl.TEXTURE_2D, videoTexture);
-            gl.uniform1i(videoTextureLocation, 2);
-            
-            gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
-            gl.uniform1f(timeLocation, currentTime);
-            gl.uniform1f(sensitivityLocation, parseFloat(sensitivitySlider.value));
-            gl.uniform1f(strengthLocation, parseFloat(strengthSlider.value));
-            
-            // Dibujar
-            gl.drawArrays(gl.TRIANGLES, 0, 6);
-            
-            // Renderizar a pantalla
+            // Renderizar a pantalla siempre
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             gl.viewport(0, 0, canvas.width, canvas.height);
             
             gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, nextStateTexture);
+            gl.bindTexture(gl.TEXTURE_2D, currentStateTexture);
             gl.drawArrays(gl.TRIANGLES, 0, 6);
-            
-            // Intercambiar texturas
-            const temp = currentStateTexture;
-            currentStateTexture = nextStateTexture;
-            nextStateTexture = temp;
             
             requestAnimationFrame(render);
         }
         
         // Event listeners
-        resetBtn.addEventListener('click', () => {
-            initializeRandomState();
-        });
-        
-        randomizeBtn.addEventListener('click', () => {
-            initializeRandomState();
-        });
-        
         pauseBtn.addEventListener('click', () => {
             isRunning = !isRunning;
             pauseBtn.textContent = isRunning ? 'Pausar' : 'Reanudar';
@@ -447,7 +424,7 @@
         
         // Inicializar
         setupCamera();
-        initializeRandomState();
+        initializeFromCamera();
         render();
         
     </script>
