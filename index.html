@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Autómatas Celulares con Cámara Integrada</title>
+    <title>Imagen Deformada por Autómatas</title>
     <style>
         body {
             margin: 0;
@@ -28,38 +28,44 @@
             top: 20px;
             left: 20px;
             z-index: 100;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.9);
             padding: 15px;
             border-radius: 10px;
             color: white;
+            backdrop-filter: blur(10px);
         }
         
         .control-group {
-            margin-bottom: 10px;
+            margin-bottom: 12px;
         }
         
         label {
             display: block;
             margin-bottom: 5px;
-            font-size: 12px;
+            font-size: 11px;
+            color: #ccc;
         }
         
         input[type="range"] {
-            width: 150px;
+            width: 140px;
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
         }
         
         button {
-            background: #333;
+            background: linear-gradient(45deg, #333, #555);
             color: white;
             border: none;
-            padding: 5px 10px;
-            border-radius: 5px;
+            padding: 6px 12px;
+            border-radius: 6px;
             cursor: pointer;
             margin: 2px;
+            font-size: 11px;
         }
         
         button:hover {
-            background: #555;
+            background: linear-gradient(45deg, #555, #777);
         }
         
         #video {
@@ -68,9 +74,10 @@
             right: 20px;
             width: 160px;
             height: 120px;
-            border: 2px solid #fff;
-            border-radius: 5px;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 8px;
             transform: scaleX(-1);
+            opacity: 0.8;
         }
         
         #status {
@@ -78,10 +85,11 @@
             bottom: 20px;
             left: 20px;
             color: #fff;
-            font-size: 12px;
+            font-size: 11px;
             background: rgba(0, 0, 0, 0.8);
-            padding: 10px;
-            border-radius: 5px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            backdrop-filter: blur(5px);
         }
     </style>
 </head>
@@ -92,28 +100,33 @@
         
         <div id="controls">
             <div class="control-group">
-                <label>Velocidad de Evolución:</label>
-                <input type="range" id="speed" min="1" max="60" step="1" value="30">
+                <label>🔥 Intensidad de Degradación:</label>
+                <input type="range" id="degradation" min="0.1" max="0.95" step="0.05" value="0.7">
             </div>
             <div class="control-group">
-                <label>Mezcla Cámara/Autómata:</label>
-                <input type="range" id="blend" min="0.0" max="1.0" step="0.1" value="0.5">
+                <label>⚡ Velocidad de Flujo:</label>
+                <input type="range" id="flowSpeed" min="0.5" max="5.0" step="0.1" value="2.0">
             </div>
             <div class="control-group">
-                <label>Umbral de Brillo:</label>
-                <input type="range" id="threshold" min="0.1" max="0.9" step="0.1" value="0.4">
+                <label>🌊 Fuerza de Deformación:</label>
+                <input type="range" id="distortion" min="0.0" max="20.0" step="0.5" value="5.0">
             </div>
             <div class="control-group">
-                <label>Tamaño de Célula:</label>
-                <input type="range" id="cellSize" min="1" max="8" step="1" value="3">
+                <label>🎨 Mezcla de Color:</label>
+                <input type="range" id="colorMix" min="0.0" max="1.0" step="0.1" value="0.6">
             </div>
             <div class="control-group">
-                <button id="pause">Pausar</button>
+                <label>📐 Resolución Celular:</label>
+                <input type="range" id="resolution" min="0.5" max="4.0" step="0.1" value="1.5">
+            </div>
+            <div class="control-group">
+                <button id="reset">🔄 Reset</button>
+                <button id="pause">⏸️ Pausar</button>
             </div>
         </div>
         
         <div id="status">
-            Inicializando cámara...
+            Iniciando degradación digital...
         </div>
     </div>
 
@@ -124,10 +137,12 @@
         const status = document.getElementById('status');
         
         // Controles
-        const speedSlider = document.getElementById('speed');
-        const blendSlider = document.getElementById('blend');
-        const thresholdSlider = document.getElementById('threshold');
-        const cellSizeSlider = document.getElementById('cellSize');
+        const degradationSlider = document.getElementById('degradation');
+        const flowSpeedSlider = document.getElementById('flowSpeed');
+        const distortionSlider = document.getElementById('distortion');
+        const colorMixSlider = document.getElementById('colorMix');
+        const resolutionSlider = document.getElementById('resolution');
+        const resetBtn = document.getElementById('reset');
         const pauseBtn = document.getElementById('pause');
         
         let isRunning = true;
@@ -153,91 +168,113 @@
             }
         `;
         
-        // Fragment shader que integra cámara con autómatas
+        // Fragment shader para deformación fluida por autómatas
         const fragmentShaderSource = `
             precision mediump float;
             
-            uniform sampler2D u_currentState;
+            uniform sampler2D u_previousFrame;
             uniform sampler2D u_videoTexture;
             uniform vec2 u_resolution;
             uniform float u_time;
-            uniform float u_blend;
-            uniform float u_threshold;
-            uniform float u_cellSize;
+            uniform float u_degradation;
+            uniform float u_flowSpeed;
+            uniform float u_distortion;
+            uniform float u_colorMix;
+            uniform float u_cellResolution;
             
             varying vec2 v_texCoord;
             
-            // Función para obtener el estado de una célula vecina
-            float getCell(vec2 offset) {
-                vec2 cellOffset = offset * u_cellSize;
-                vec2 coord = v_texCoord + cellOffset / u_resolution;
-                if (coord.x < 0.0 || coord.x > 1.0 || coord.y < 0.0 || coord.y > 1.0) {
-                    return 0.0;
-                }
-                return texture2D(u_currentState, coord).r;
+            // Función de ruido mejorada
+            float noise(vec2 p) {
+                return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
             }
             
-            // Convertir píxel de cámara a estado celular
-            float getCameraCell() {
-                vec2 videoCoord = vec2(1.0 - v_texCoord.x, v_texCoord.y);
-                vec3 cameraColor = texture2D(u_videoTexture, videoCoord).rgb;
-                float brightness = dot(cameraColor, vec3(0.299, 0.587, 0.114));
-                return step(u_threshold, brightness);
+            // Ruido suave
+            float smoothNoise(vec2 p) {
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                f = f * f * (3.0 - 2.0 * f);
+                
+                float a = noise(i);
+                float b = noise(i + vec2(1.0, 0.0));
+                float c = noise(i + vec2(0.0, 1.0));
+                float d = noise(i + vec2(1.0, 1.0));
+                
+                return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+            }
+            
+            // Autómata celular para deformación
+            float cellularPattern(vec2 coord, float time) {
+                vec2 cellCoord = floor(coord * u_cellResolution) / u_cellResolution;
+                
+                float n1 = smoothNoise(cellCoord * 10.0 + time * u_flowSpeed);
+                float n2 = smoothNoise(cellCoord * 20.0 - time * u_flowSpeed * 0.7);
+                float n3 = smoothNoise(cellCoord * 5.0 + time * u_flowSpeed * 1.3);
+                
+                // Crear patrón celular evolutivo
+                float pattern = sin(n1 * 6.28) * cos(n2 * 6.28) * sin(n3 * 3.14);
+                
+                // Autómata que se propaga
+                float wave1 = sin((coord.x + coord.y) * 15.0 + time * u_flowSpeed * 3.0);
+                float wave2 = cos((coord.x - coord.y) * 12.0 - time * u_flowSpeed * 2.0);
+                
+                return (pattern + wave1 * 0.3 + wave2 * 0.2) * 0.5 + 0.5;
             }
             
             void main() {
-                // Obtener coordenadas de célula
-                vec2 cellCoord = floor(v_texCoord * u_resolution / u_cellSize) * u_cellSize / u_resolution;
+                vec2 coord = v_texCoord;
                 
-                // Contar vecinos vivos
-                float neighbors = 
-                    getCell(vec2(-1, -1)) + getCell(vec2(0, -1)) + getCell(vec2(1, -1)) +
-                    getCell(vec2(-1,  0)) +                        getCell(vec2(1,  0)) +
-                    getCell(vec2(-1,  1)) + getCell(vec2(0,  1)) + getCell(vec2(1,  1));
+                // Crear deformación basada en autómatas celulares
+                float cellPattern = cellularPattern(coord, u_time);
+                float cellPattern2 = cellularPattern(coord + vec2(0.1, 0.15), u_time + 1.0);
                 
-                float currentCell = getCell(vec2(0, 0));
-                float cameraCell = getCameraCell();
+                // Deformación de coordenadas
+                vec2 distortionForce = vec2(
+                    (cellPattern - 0.5) * u_distortion / u_resolution.x,
+                    (cellPattern2 - 0.5) * u_distortion / u_resolution.y
+                );
                 
-                // Autómata celular híbrido
-                float automataState = 0.0;
+                // Coordenadas deformadas para la cámara
+                vec2 videoCoord = vec2(1.0 - coord.x, coord.y) + distortionForce;
+                videoCoord = clamp(videoCoord, 0.0, 1.0);
                 
-                // Reglas modificadas que consideran tanto vecinos como cámara
-                if (currentCell > 0.5 || cameraCell > 0.5) {
-                    // Célula viva o píxel brillante de cámara
-                    if (neighbors >= 2.0 && neighbors <= 3.0) {
-                        automataState = 1.0;
-                    } else if (neighbors == 1.0 && cameraCell > 0.5) {
-                        // La cámara puede "rescatar" células con pocos vecinos
-                        automataState = 1.0;
-                    }
-                } else {
-                    // Célula muerta
-                    if (neighbors >= 2.8 && neighbors <= 3.2) {
-                        automataState = 1.0;
-                    }
-                }
-                
-                // Mezclar estado del autómata con imagen de cámara
-                vec2 videoCoord = vec2(1.0 - v_texCoord.x, v_texCoord.y);
+                // Obtener imagen de la cámara deformada
                 vec3 cameraColor = texture2D(u_videoTexture, videoCoord).rgb;
                 
-                // Estado final basado en mezcla
-                float finalState = mix(automataState, cameraCell, u_blend);
+                // Obtener frame anterior para crear persistencia/degradación
+                vec3 previousColor = texture2D(u_previousFrame, coord + distortionForce * 0.5).rgb;
                 
-                // Colores dinámicos
-                vec3 finalColor;
-                if (finalState > 0.5) {
-                    // Combinar colores de cámara con colores de autómata
-                    vec3 automataColor = vec3(0.2, 1.0, 0.5); // Verde característico
-                    finalColor = mix(automataColor, cameraColor, u_blend);
-                    
-                    // Efecto de "vida digital"
-                    float pulse = sin(u_time * 3.0 + v_texCoord.x * 10.0 + v_texCoord.y * 10.0) * 0.1 + 0.9;
-                    finalColor *= pulse;
-                } else {
-                    // Fondo con trazas de la cámara
-                    finalColor = cameraColor * 0.1 * (1.0 - u_blend);
+                // Crear efecto de degradación celular
+                float degradationMask = cellularPattern(coord + u_time * 0.1, u_time * 2.0);
+                float degradationAmount = u_degradation + degradationMask * 0.2;
+                
+                // Mezclar frame anterior con nueva imagen (efecto de persistencia/decaimiento)
+                vec3 persistentColor = mix(cameraColor, previousColor, degradationAmount);
+                
+                // Crear colores de autómata
+                float cellIntensity = cellPattern;
+                vec3 cellColor = vec3(
+                    0.1 + cellIntensity * 0.4,
+                    0.6 + sin(cellIntensity * 3.14 + u_time) * 0.3,
+                    0.3 + cos(cellIntensity * 6.28 + u_time * 1.5) * 0.4
+                );
+                
+                // Mezclar colores originales con colores celulares
+                vec3 finalColor = mix(persistentColor, cellColor, u_colorMix * cellIntensity);
+                
+                // Añadir efectos de corrupción digital
+                float corruption = smoothNoise(coord * 50.0 + u_time * 5.0);
+                if (corruption > 0.8) {
+                    finalColor = mix(finalColor, vec3(1.0, 0.2, 0.8), 0.3);
                 }
+                
+                // Efecto de escanlines dinámico
+                float scanline = sin(coord.y * u_resolution.y * 0.5 + u_time * 10.0) * 0.1 + 0.9;
+                finalColor *= scanline;
+                
+                // Vignette sutil
+                float vignette = 1.0 - length(coord - 0.5) * 0.8;
+                finalColor *= vignette;
                 
                 gl_FragColor = vec4(finalColor, 1.0);
             }
@@ -287,59 +324,52 @@
         
         // Obtener ubicaciones de atributos y uniforms
         const positionAttributeLocation = gl.getAttribLocation(program, 'a_position');
-        const currentStateLocation = gl.getUniformLocation(program, 'u_currentState');
+        const previousFrameLocation = gl.getUniformLocation(program, 'u_previousFrame');
         const videoTextureLocation = gl.getUniformLocation(program, 'u_videoTexture');
         const resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
         const timeLocation = gl.getUniformLocation(program, 'u_time');
-        const blendLocation = gl.getUniformLocation(program, 'u_blend');
-        const thresholdLocation = gl.getUniformLocation(program, 'u_threshold');
-        const cellSizeLocation = gl.getUniformLocation(program, 'u_cellSize');
+        const degradationLocation = gl.getUniformLocation(program, 'u_degradation');
+        const flowSpeedLocation = gl.getUniformLocation(program, 'u_flowSpeed');
+        const distortionLocation = gl.getUniformLocation(program, 'u_distortion');
+        const colorMixLocation = gl.getUniformLocation(program, 'u_colorMix');
+        const cellResolutionLocation = gl.getUniformLocation(program, 'u_cellResolution');
         
-        // Crear texturas para el estado actual y siguiente
-        const currentStateTexture = gl.createTexture();
-        const nextStateTexture = gl.createTexture();
+        // Crear texturas
+        const frameTexture1 = gl.createTexture();
+        const frameTexture2 = gl.createTexture();
         const videoTexture = gl.createTexture();
+        
+        let currentFrameTexture = frameTexture1;
+        let previousFrameTexture = frameTexture2;
         
         // Configurar texturas
         function setupTexture(texture, width, height, data = null) {
             gl.bindTexture(gl.TEXTURE_2D, texture);
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         }
         
-        // Inicializar estado basado en la cámara
-        function initializeFromCamera() {
-            const width = canvas.width;
-            const height = canvas.height;
-            const data = new Uint8Array(width * height * 4);
-            
-            // Inicializar con patrón aleatorio que será reemplazado por la cámara
-            for (let i = 0; i < data.length; i += 4) {
-                const alive = Math.random() < 0.1 ? 255 : 0;
-                data[i] = alive;     // R
-                data[i + 1] = alive; // G
-                data[i + 2] = alive; // B
-                data[i + 3] = 255;   // A
-            }
-            
-            setupTexture(currentStateTexture, width, height, data);
-            setupTexture(nextStateTexture, width, height);
+        // Inicializar texturas
+        function initializeTextures() {
+            setupTexture(frameTexture1, canvas.width, canvas.height);
+            setupTexture(frameTexture2, canvas.width, canvas.height);
+            setupTexture(videoTexture, 640, 480);
         }
         
         // Configurar cámara
         async function setupCamera() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { width: 640, height: 480 } 
+                    video: { width: 640, height: 480, frameRate: 30 } 
                 });
                 video.srcObject = stream;
                 
                 video.addEventListener('loadedmetadata', () => {
-                    status.textContent = 'Cámara integrada - Los píxeles son células vivas';
-                    setupTexture(videoTexture, video.videoWidth, video.videoHeight);
+                    status.textContent = '🔥 Degradación activa - Tu imagen se deforma constantemente';
+                    initializeTextures();
                 });
                 
             } catch (err) {
@@ -354,77 +384,82 @@
         let startTime = Date.now();
         
         function render() {
-            if (!isRunning) return;
-            
             const currentTime = (Date.now() - startTime) / 1000;
             frameCount++;
             
-            // Actualizar textura de video constantemente
+            if (!isRunning) {
+                requestAnimationFrame(render);
+                return;
+            }
+            
+            // Actualizar textura de video
             if (video.readyState >= 2) {
                 gl.activeTexture(gl.TEXTURE1);
                 gl.bindTexture(gl.TEXTURE_2D, videoTexture);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
             }
             
-            // Solo evolucionar el autómata según la velocidad seleccionada
-            if (frameCount % Math.max(1, 61 - parseInt(speedSlider.value)) === 0) {
-                // Renderizar a textura off-screen (próximo estado)
-                gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, nextStateTexture, 0);
-                gl.viewport(0, 0, canvas.width, canvas.height);
-                
-                gl.useProgram(program);
-                
-                // Configurar atributos
-                gl.enableVertexAttribArray(positionAttributeLocation);
-                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-                gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
-                
-                // Configurar uniforms
-                gl.activeTexture(gl.TEXTURE0);
-                gl.bindTexture(gl.TEXTURE_2D, currentStateTexture);
-                gl.uniform1i(currentStateLocation, 0);
-                
-                gl.activeTexture(gl.TEXTURE1);
-                gl.bindTexture(gl.TEXTURE_2D, videoTexture);
-                gl.uniform1i(videoTextureLocation, 1);
-                
-                gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
-                gl.uniform1f(timeLocation, currentTime);
-                gl.uniform1f(blendLocation, parseFloat(blendSlider.value));
-                gl.uniform1f(thresholdLocation, parseFloat(thresholdSlider.value));
-                gl.uniform1f(cellSizeLocation, parseFloat(cellSizeSlider.value));
-                
-                // Dibujar
-                gl.drawArrays(gl.TRIANGLES, 0, 6);
-                
-                // Intercambiar texturas
-                const temp = currentStateTexture;
-                currentStateTexture = nextStateTexture;
-                nextStateTexture = temp;
-            }
+            // Renderizar a textura off-screen
+            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, currentFrameTexture, 0);
+            gl.viewport(0, 0, canvas.width, canvas.height);
             
-            // Renderizar a pantalla siempre
+            gl.useProgram(program);
+            
+            // Configurar atributos
+            gl.enableVertexAttribArray(positionAttributeLocation);
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+            
+            // Configurar uniforms
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, previousFrameTexture);
+            gl.uniform1i(previousFrameLocation, 0);
+            
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+            gl.uniform1i(videoTextureLocation, 1);
+            
+            gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
+            gl.uniform1f(timeLocation, currentTime);
+            gl.uniform1f(degradationLocation, parseFloat(degradationSlider.value));
+            gl.uniform1f(flowSpeedLocation, parseFloat(flowSpeedSlider.value));
+            gl.uniform1f(distortionLocation, parseFloat(distortionSlider.value));
+            gl.uniform1f(colorMixLocation, parseFloat(colorMixSlider.value));
+            gl.uniform1f(cellResolutionLocation, parseFloat(resolutionSlider.value));
+            
+            // Dibujar
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            
+            // Renderizar a pantalla
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             gl.viewport(0, 0, canvas.width, canvas.height);
             
             gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, currentStateTexture);
+            gl.bindTexture(gl.TEXTURE_2D, currentFrameTexture);
             gl.drawArrays(gl.TRIANGLES, 0, 6);
+            
+            // Intercambiar texturas para el próximo frame
+            const temp = currentFrameTexture;
+            currentFrameTexture = previousFrameTexture;
+            previousFrameTexture = temp;
             
             requestAnimationFrame(render);
         }
         
         // Event listeners
+        resetBtn.addEventListener('click', () => {
+            initializeTextures();
+            startTime = Date.now();
+        });
+        
         pauseBtn.addEventListener('click', () => {
             isRunning = !isRunning;
-            pauseBtn.textContent = isRunning ? 'Pausar' : 'Reanudar';
-            if (isRunning) render();
+            pauseBtn.innerHTML = isRunning ? '⏸️ Pausar' : '▶️ Reanudar';
         });
         
         // Inicializar
         setupCamera();
-        initializeFromCamera();
         render();
         
     </script>
