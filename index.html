@@ -195,26 +195,40 @@
                 float currentCell = getCell(vec2(0, 0));
                 float newState = 0.0;
                 
-                // Reglas del Game of Life
+                // Reglas modificadas más dinámicas
                 if (currentCell > 0.5) {
-                    // Célula viva
-                    if (neighbors >= 2.0 && neighbors <= 3.0) {
-                        newState = 1.0;
+                    // Célula viva - más flexible para sobrevivir
+                    if (neighbors >= 1.8 && neighbors <= 3.2) {
+                        newState = 0.95; // Decaimiento gradual
                     }
                 } else {
-                    // Célula muerta
-                    if (neighbors >= 2.9 && neighbors <= 3.1) {
+                    // Célula muerta - más fácil nacer
+                    if (neighbors >= 2.5 && neighbors <= 3.5) {
                         newState = 1.0;
                     }
+                }
+                
+                // Añadir vida espontánea ocasional
+                vec2 worldPos = v_texCoord * u_resolution;
+                float spontaneous = fract(sin(dot(worldPos + u_time * 0.1, vec2(12.9898, 78.233))) * 43758.5453);
+                if (spontaneous > 0.998) {
+                    newState = 1.0;
                 }
                 
                 // Detectar movimiento y agregar perturbaciones
                 float motion = detectMotion();
                 
                 // Si hay movimiento significativo, crear nueva vida
-                if (motion > 0.3) {
-                    float noise = fract(sin(dot(v_texCoord * 1000.0, vec2(12.9898, 78.233))) * 43758.5453);
-                    if (noise < motion * u_strength) {
+                if (motion > 0.2) {
+                    vec2 worldPos = v_texCoord * u_resolution;
+                    float noise = fract(sin(dot(worldPos + u_time, vec2(12.9898, 78.233))) * 43758.5453);
+                    if (noise < motion * u_strength * 2.0) {
+                        newState = 1.0;
+                    }
+                    
+                    // Crear patrones más complejos alrededor del movimiento
+                    float pattern = sin(worldPos.x * 0.1 + u_time) * sin(worldPos.y * 0.1 + u_time);
+                    if (pattern > 0.3 && motion > 0.4) {
                         newState = 1.0;
                     }
                 }
@@ -355,7 +369,7 @@
             frameCount++;
             
             // Actualizar texturas de video cada pocos frames para detectar movimiento
-            if (frameCount % parseInt(speedSlider.value) === 0 && video.readyState >= 2) {
+            if (frameCount % Math.max(1, parseInt(speedSlider.value) - 2) === 0 && video.readyState >= 2) {
                 // Guardar frame anterior
                 gl.activeTexture(gl.TEXTURE1);
                 gl.bindTexture(gl.TEXTURE_2D, prevVideoTexture);
