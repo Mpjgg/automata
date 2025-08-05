@@ -136,6 +136,12 @@
         const video = document.getElementById('video');
         const status = document.getElementById('status');
         
+        // Verificar WebGL
+        if (!gl) {
+            status.textContent = 'Error: WebGL no está disponible en este navegador';
+            console.error('WebGL no disponible');
+        }
+        
         // Controles
         const degradationSlider = document.getElementById('degradation');
         const flowSpeedSlider = document.getElementById('flowSpeed');
@@ -152,7 +158,9 @@
         function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
-            gl.viewport(0, 0, canvas.width, canvas.height);
+            if (gl) {
+                gl.viewport(0, 0, canvas.width, canvas.height);
+            }
         }
         resizeCanvas();
         window.addEventListener('resize', resizeCanvas);
@@ -309,41 +317,74 @@
             return program;
         }
         
+        // Variables globales para WebGL
+        let program = null;
+        let positionBuffer = null;
+        let positionAttributeLocation = null;
+        let previousFrameLocation = null;
+        let videoTextureLocation = null;
+        let resolutionLocation = null;
+        let timeLocation = null;
+        let degradationLocation = null;
+        let flowSpeedLocation = null;
+        let distortionLocation = null;
+        let colorMixLocation = null;
+        let cellResolutionLocation = null;
+        
         // Configurar WebGL
-        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
-        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
-        const program = createProgram(gl, vertexShader, fragmentShader);
-        
-        // Configurar buffers
-        const positionBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-            -1, -1,  1, -1, -1,  1,
-            -1,  1,  1, -1,  1,  1
-        ]), gl.STATIC_DRAW);
-        
-        // Obtener ubicaciones de atributos y uniforms
-        const positionAttributeLocation = gl.getAttribLocation(program, 'a_position');
-        const previousFrameLocation = gl.getUniformLocation(program, 'u_previousFrame');
-        const videoTextureLocation = gl.getUniformLocation(program, 'u_videoTexture');
-        const resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
-        const timeLocation = gl.getUniformLocation(program, 'u_time');
-        const degradationLocation = gl.getUniformLocation(program, 'u_degradation');
-        const flowSpeedLocation = gl.getUniformLocation(program, 'u_flowSpeed');
-        const distortionLocation = gl.getUniformLocation(program, 'u_distortion');
-        const colorMixLocation = gl.getUniformLocation(program, 'u_colorMix');
-        const cellResolutionLocation = gl.getUniformLocation(program, 'u_cellResolution');
+        function initWebGL() {
+            if (!gl) return false;
+            
+            const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+            const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+            
+            if (!vertexShader || !fragmentShader) {
+                status.textContent = 'Error: No se pudieron compilar los shaders';
+                return false;
+            }
+            
+            program = createProgram(gl, vertexShader, fragmentShader);
+            
+            if (!program) {
+                status.textContent = 'Error: No se pudo crear el programa WebGL';
+                return false;
+            }
+            
+            // Configurar buffers
+            positionBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+                -1, -1,  1, -1, -1,  1,
+                -1,  1,  1, -1,  1,  1
+            ]), gl.STATIC_DRAW);
+            
+            // Obtener ubicaciones de atributos y uniforms
+            positionAttributeLocation = gl.getAttribLocation(program, 'a_position');
+            previousFrameLocation = gl.getUniformLocation(program, 'u_previousFrame');
+            videoTextureLocation = gl.getUniformLocation(program, 'u_videoTexture');
+            resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
+            timeLocation = gl.getUniformLocation(program, 'u_time');
+            degradationLocation = gl.getUniformLocation(program, 'u_degradation');
+            flowSpeedLocation = gl.getUniformLocation(program, 'u_flowSpeed');
+            distortionLocation = gl.getUniformLocation(program, 'u_distortion');
+            colorMixLocation = gl.getUniformLocation(program, 'u_colorMix');
+            cellResolutionLocation = gl.getUniformLocation(program, 'u_cellResolution');
+            
+            return true;
+        }
         
         // Crear texturas
-        const frameTexture1 = gl.createTexture();
-        const frameTexture2 = gl.createTexture();
-        const videoTexture = gl.createTexture();
+        const frameTexture1 = gl ? gl.createTexture() : null;
+        const frameTexture2 = gl ? gl.createTexture() : null;
+        const videoTexture = gl ? gl.createTexture() : null;
         
         let currentFrameTexture = frameTexture1;
         let previousFrameTexture = frameTexture2;
         
         // Configurar texturas
         function setupTexture(texture, width, height, data = null) {
+            if (!gl || !texture) return;
+            
             gl.bindTexture(gl.TEXTURE_2D, texture);
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -354,6 +395,8 @@
         
         // Inicializar texturas
         function initializeTextures() {
+            if (!gl) return;
+            
             setupTexture(frameTexture1, canvas.width, canvas.height);
             setupTexture(frameTexture2, canvas.width, canvas.height);
             setupTexture(videoTexture, 640, 480);
@@ -379,7 +422,7 @@
         }
         
         // Framebuffer para renderizado off-screen
-        const framebuffer = gl.createFramebuffer();
+        const framebuffer = gl ? gl.createFramebuffer() : null;
         
         let startTime = Date.now();
         
@@ -387,7 +430,7 @@
             const currentTime = (Date.now() - startTime) / 1000;
             frameCount++;
             
-            if (!isRunning) {
+            if (!isRunning || !gl || !program) {
                 requestAnimationFrame(render);
                 return;
             }
@@ -440,7 +483,7 @@
             gl.drawArrays(gl.TRIANGLES, 0, 6);
             
             // Intercambiar texturas para el próximo frame
-            const temp = currentFrameTexture;
+            let temp = currentFrameTexture;
             currentFrameTexture = previousFrameTexture;
             previousFrameTexture = temp;
             
@@ -458,10 +501,15 @@
             pauseBtn.innerHTML = isRunning ? '⏸️ Pausar' : '▶️ Reanudar';
         });
         
-        // Inicializar
-        setupCamera();
-        render();
+        // Inicializar todo
+        if (initWebGL()) {
+            setupCamera();
+            render();
+        } else {
+            status.textContent = 'Error: WebGL no se pudo inicializar';
+        }
         
-    </script>
+    </script>}
+
 </body>
 </html>
