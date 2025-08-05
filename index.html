@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autómatas Celulares Reactivos</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        canvas {
+            display: block;
+        }
+        
+        #controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            color: white;
+        }
+        
+        .control-group {
+            margin-bottom: 10px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+        
+        input[type="range"] {
+            width: 150px;
+        }
+        
+        button {
+            background: #333;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 2px;
+        }
+        
+        button:hover {
+            background: #555;
+        }
+        
+        #video {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 160px;
+            height: 120px;
+            border: 2px solid #fff;
+            border-radius: 5px;
+            transform: scaleX(-1);
+        }
+        
+        #status {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            color: #fff;
+            font-size: 12px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="canvas"></canvas>
+        <video id="video" autoplay muted></video>
+        
+        <div id="controls">
+            <div class="control-group">
+                <label>Sensibilidad de Movimiento:</label>
+                <input type="range" id="sensitivity" min="0.1" max="2.0" step="0.1" value="0.8">
+            </div>
+            <div class="control-group">
+                <label>Velocidad de Evolución:</label>
+                <input type="range" id="speed" min="1" max="10" step="1" value="3">
+            </div>
+            <div class="control-group">
+                <label>Fuerza de Perturbación:</label>
+                <input type="range" id="strength" min="0.1" max="1.0" step="0.1" value="0.5">
+            </div>
+            <div class="control-group">
+                <button id="reset">Reset</button>
+                <button id="randomize">Aleatorizar</button>
+                <button id="pause">Pausar</button>
+            </div>
+        </div>
+        
+        <div id="status">
+            Inicializando cámara...
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const gl = canvas.getContext('webgl');
+        const video = document.getElementById('video');
+        const status = document.getElementById('status');
+        
+        // Controles
+        const sensitivitySlider = document.getElementById('sensitivity');
+        const speedSlider = document.getElementById('speed');
+        const strengthSlider = document.getElementById('strength');
+        const resetBtn = document.getElementById('reset');
+        const randomizeBtn = document.getElementById('randomize');
+        const pauseBtn = document.getElementById('pause');
+        
+        let isRunning = true;
+        let frameCount = 0;
+        
+        // Configurar canvas
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Vertex shader
+        const vertexShaderSource = `
+            attribute vec2 a_position;
+            varying vec2 v_texCoord;
+            
+            void main() {
+                gl_Position = vec4(a_position, 0.0, 1.0);
+                v_texCoord = (a_position + 1.0) * 0.5;
+            }
+        `;
+        
+        // Fragment shader para autómatas celulares con detección de movimiento
+        const fragmentShaderSource = `
+            precision mediump float;
+            
+            uniform sampler2D u_currentState;
+            uniform sampler2D u_videoTexture;
+            uniform sampler2D u_prevVideoTexture;
+            uniform vec2 u_resolution;
+            uniform float u_time;
+            uniform float u_sensitivity;
+            uniform float u_strength;
+            
+            varying vec2 v_texCoord;
+            
+            // Función para obtener el estado de una célula vecina
+            float getCell(vec2 offset) {
+                vec2 coord = v_texCoord + offset / u_resolution;
+                if (coord.x < 0.0 || coord.x > 1.0 || coord.y < 0.0 || coord.y > 1.0) {
+                    return 0.0;
+                }
+                return texture2D(u_currentState, coord).r;
+            }
+            
+            // Detectar movimiento comparando frames
+            float detectMotion() {
+                vec2 videoCoord = vec2(1.0 - v_texCoord.x, v_texCoord.y); // Flip horizontal
+                vec3 current = texture2D(u_videoTexture, videoCoord).rgb;
+                vec3 previous = texture2D(u_prevVideoTexture, videoCoord).rgb;
+                
+                float diff = length(current - previous);
+                return smoothstep(0.0, u_sensitivity, diff);
+            }
+            
+            void main() {
+                // Contar vecinos vivos (Conway's Game of Life)
+                float neighbors = 
+                    getCell(vec2(-1, -1)) + getCell(vec2(0, -1)) + getCell(vec2(1, -1)) +
+                    getCell(vec2(-1,  0)) +                        getCell(vec2(1,  0)) +
+                    getCell(vec2(-1,  1)) + getCell(vec2(0,  1)) + getCell(vec2(1,  1));
+                
+                float currentCell = getCell(vec2(0, 0));
+                float newState = 0.0;
+                
+                // Reglas del Game of Life
+                if (currentCell > 0.5) {
+                    // Célula viva
+                    if (neighbors >= 2.0 && neighbors <= 3.0) {
+                        newState = 1.0;
+                    }
+                } else {
+                    // Célula muerta
+                    if (neighbors >= 2.9 && neighbors <= 3.1) {
+                        newState = 1.0;
+                    }
+                }
+                
+                // Detectar movimiento y agregar perturbaciones
+                float motion = detectMotion();
+                
+                // Si hay movimiento significativo, crear nueva vida
+                if (motion > 0.3) {
+                    float noise = fract(sin(dot(v_texCoord * 1000.0, vec2(12.9898, 78.233))) * 43758.5453);
+                    if (noise < motion * u_strength) {
+                        newState = 1.0;
+                    }
+                }
+                
+                // Agregar variaciones de color basadas en el movimiento
+                float motionIntensity = motion * 0.5;
+                vec3 color = vec3(newState);
+                
+                if (newState > 0.5) {
+                    // Células vivas con colores influenciados por el movimiento
+                    color = vec3(
+                        newState * (0.5 + motionIntensity),
+                        newState * (0.8 - motionIntensity * 0.3),
+                        newState * (0.3 + motionIntensity * 0.7)
+                    );
+                }
+                
+                gl_FragColor = vec4(color, 1.0);
+            }
+        `;
+        
+        // Compilar shader
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Error compilando shader:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+        
+        // Crear programa de shader
+        function createProgram(gl, vertexShader, fragmentShader) {
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+            
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error('Error enlazando programa:', gl.getProgramInfoLog(program));
+                gl.deleteProgram(program);
+                return null;
+            }
+            return program;
+        }
+        
+        // Configurar WebGL
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+        const program = createProgram(gl, vertexShader, fragmentShader);
+        
+        // Configurar buffers
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            -1, -1,  1, -1, -1,  1,
+            -1,  1,  1, -1,  1,  1
+        ]), gl.STATIC_DRAW);
+        
+        // Obtener ubicaciones de atributos y uniforms
+        const positionAttributeLocation = gl.getAttribLocation(program, 'a_position');
+        const currentStateLocation = gl.getUniformLocation(program, 'u_currentState');
+        const videoTextureLocation = gl.getUniformLocation(program, 'u_videoTexture');
+        const prevVideoTextureLocation = gl.getUniformLocation(program, 'u_prevVideoTexture');
+        const resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
+        const timeLocation = gl.getUniformLocation(program, 'u_time');
+        const sensitivityLocation = gl.getUniformLocation(program, 'u_sensitivity');
+        const strengthLocation = gl.getUniformLocation(program, 'u_strength');
+        
+        // Crear texturas para el estado actual y anterior
+        const currentStateTexture = gl.createTexture();
+        const nextStateTexture = gl.createTexture();
+        const videoTexture = gl.createTexture();
+        const prevVideoTexture = gl.createTexture();
+        
+        // Configurar texturas
+        function setupTexture(texture, width, height, data = null) {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        }
+        
+        // Inicializar estado aleatorio
+        function initializeRandomState() {
+            const width = canvas.width;
+            const height = canvas.height;
+            const data = new Uint8Array(width * height * 4);
+            
+            for (let i = 0; i < data.length; i += 4) {
+                const alive = Math.random() < 0.3 ? 255 : 0;
+                data[i] = alive;     // R
+                data[i + 1] = alive; // G
+                data[i + 2] = alive; // B
+                data[i + 3] = 255;   // A
+            }
+            
+            setupTexture(currentStateTexture, width, height, data);
+            setupTexture(nextStateTexture, width, height);
+        }
+        
+        // Configurar cámara
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 640, height: 480 } 
+                });
+                video.srcObject = stream;
+                
+                video.addEventListener('loadedmetadata', () => {
+                    status.textContent = 'Cámara lista - Muévete para influir en los autómatas';
+                    setupTexture(videoTexture, video.videoWidth, video.videoHeight);
+                    setupTexture(prevVideoTexture, video.videoWidth, video.videoHeight);
+                });
+                
+            } catch (err) {
+                status.textContent = 'Error: No se pudo acceder a la cámara';
+                console.error('Error accediendo a la cámara:', err);
+            }
+        }
+        
+        // Framebuffer para renderizado off-screen
+        const framebuffer = gl.createFramebuffer();
+        
+        let startTime = Date.now();
+        let lastVideoUpdate = 0;
+        
+        function render() {
+            if (!isRunning) return;
+            
+            const currentTime = (Date.now() - startTime) / 1000;
+            frameCount++;
+            
+            // Actualizar texturas de video cada pocos frames para detectar movimiento
+            if (frameCount % parseInt(speedSlider.value) === 0 && video.readyState >= 2) {
+                // Guardar frame anterior
+                gl.activeTexture(gl.TEXTURE1);
+                gl.bindTexture(gl.TEXTURE_2D, prevVideoTexture);
+                gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, video.videoWidth, video.videoHeight, 0);
+                
+                // Actualizar frame actual
+                gl.activeTexture(gl.TEXTURE2);
+                gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+            }
+            
+            // Renderizar a textura off-screen (próximo estado)
+            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, nextStateTexture, 0);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            
+            gl.useProgram(program);
+            
+            // Configurar atributos
+            gl.enableVertexAttribArray(positionAttributeLocation);
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+            
+            // Configurar uniforms
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, currentStateTexture);
+            gl.uniform1i(currentStateLocation, 0);
+            
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, prevVideoTexture);
+            gl.uniform1i(prevVideoTextureLocation, 1);
+            
+            gl.activeTexture(gl.TEXTURE2);
+            gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+            gl.uniform1i(videoTextureLocation, 2);
+            
+            gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
+            gl.uniform1f(timeLocation, currentTime);
+            gl.uniform1f(sensitivityLocation, parseFloat(sensitivitySlider.value));
+            gl.uniform1f(strengthLocation, parseFloat(strengthSlider.value));
+            
+            // Dibujar
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            
+            // Renderizar a pantalla
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, nextStateTexture);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            
+            // Intercambiar texturas
+            const temp = currentStateTexture;
+            currentStateTexture = nextStateTexture;
+            nextStateTexture = temp;
+            
+            requestAnimationFrame(render);
+        }
+        
+        // Event listeners
+        resetBtn.addEventListener('click', () => {
+            initializeRandomState();
+        });
+        
+        randomizeBtn.addEventListener('click', () => {
+            initializeRandomState();
+        });
+        
+        pauseBtn.addEventListener('click', () => {
+            isRunning = !isRunning;
+            pauseBtn.textContent = isRunning ? 'Pausar' : 'Reanudar';
+            if (isRunning) render();
+        });
+        
+        // Inicializar
+        setupCamera();
+        initializeRandomState();
+        render();
+        
+    </script>
+</body>
+</html>
