@@ -9,7 +9,7 @@ Interactive cellular automata that responds to webcam movement, creating hybrid 
 - Adjustable sensitivity and evolution speed
 
 ## Demo
-Visit: https://tu-usuario.github.io/reactive-cellular-automata
+Visit: https://mpjgg.github.io/automata/
 
 ## Usage
 1. Allow camera access
